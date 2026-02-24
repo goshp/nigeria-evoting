@@ -6,8 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "ci": "npm run lint && npm run test:coverage && npm run build"
   },
   "dependencies": {
     "react": "^19.2.0",
@@ -24,11 +30,12 @@
     "@vitest/coverage-v8": "^4.0.18",
     "@vitest/ui": "^4.0.18",
     "eslint": "^9.39.3",
-    "eslint-plugin-react": "^7.22.0",
+    "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "fake-indexeddb": "^6.2.5",
     "globals": "^16.5.0",
+    "happy-dom": "^20.7.0",
     "jsdom": "^27.0.1",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
