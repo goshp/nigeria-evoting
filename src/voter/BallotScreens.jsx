@@ -7,7 +7,7 @@
 
 // ── ElectionPickerScreen ──────────────────────────────────────────────────────
 // Shows all active elections. Marks elections the voter has already voted in.
-export function ElectionPickerScreen({ elections, hasVoted, voter, onPick }) {
+export function ElectionPickerScreen({ elections, hasVoted, didVote, voter, onPick }) {
   return (
     <div className="vote-portal">
       <div className="vote-hero">
@@ -27,7 +27,7 @@ export function ElectionPickerScreen({ elections, hasVoted, voter, onPick }) {
           <div
             key={el.id}
             className="card mb-3"
-            style={{ border: `2px solid ${hasVoted[el.id] ? "var(--gray-light)" : "var(--green)"}` }}
+            style={{ border: `2px solid ${didVote(el.id) ? "var(--gray-light)" : "var(--green)"}` }}
           >
             <div className="card-header">
               <div>
@@ -36,7 +36,7 @@ export function ElectionPickerScreen({ elections, hasVoted, voter, onPick }) {
                 </div>
                 <div className="card-header-title">{el.title}</div>
               </div>
-              {hasVoted[el.id]
+              {didVote(el.id)
                 ? <span className="badge badge-closed">Voted ✓</span>
                 : <span className="badge badge-active">Open</span>
               }
@@ -54,7 +54,7 @@ export function ElectionPickerScreen({ elections, hasVoted, voter, onPick }) {
             </div>
 
             <div style={{ padding: "0.8rem 1.5rem", background: "#fafaf8", borderTop: "1px solid var(--gray-light)" }}>
-              {hasVoted[el.id]
+              {didVote(el.id)
                 ? <span className="text-sm text-gray">✅ You have already cast your vote in this election. Your receipt was issued.</span>
                 : <button className="btn btn-primary" onClick={() => onPick(el)}>🗳️ Cast Your Vote</button>
               }
