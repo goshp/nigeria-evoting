@@ -1,5 +1,5 @@
 // ─── App.jsx ──────────────────────────────────────────────────────────────────
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 import globalStyles                               from "./shared/styles.js";
 import { INITIAL_ELECTIONS, generateReceiptCode } from "./shared/data.js";
@@ -9,10 +9,10 @@ import { AuthProvider, useAuth }                  from "./auth/AuthContext.jsx";
 import LandingPage                                from "./auth/LandingPage.jsx";
 import ProtectedRoute                             from "./auth/ProtectedRoute.jsx";
 
-import Nav          from "./Nav.jsx";
-import ManagerView  from "./manager/ManagerView.jsx";
-import VoterView    from "./voter/VoterView.jsx";
-import ResultsView  from "./results/ResultsView.jsx";
+import Nav         from "./Nav.jsx";
+import ManagerView from "./manager/ManagerView.jsx";
+import VoterView   from "./voter/VoterView.jsx";
+import ResultsView from "./results/ResultsView.jsx";
 
 function AppInner() {
   const { user, isInec, isVoter, isGuest, commitVote } = useAuth();
@@ -32,24 +32,31 @@ function AppInner() {
   const [verifyCode,           setVerifyCode]           = useState("");
   const [verifyResult,         setVerifyResult]         = useState(null);
 
-  // ── Fix 1: hasVoted keyed by "nin:electionId" not just electionId ────────────
-  // Prevents one voter's vote from marking elections as voted for all other voters
+  // ── hasVoted: keyed by "nin:electionId" — one record per voter per election ──
+  // Stored as a plain object in state. Never shared across different voter accounts.
   const [hasVoted, setHasVoted] = useState({});
 
-  // Build a voter-scoped key
-  const votedKey = (electionId) =>
-    user?.nin ? `${user.nin}:${electionId}` : electionId;
+  // Track previous user NIN so we only reset when the user actually changes
+  const prevNinRef = useRef(null);
 
-  const didVote = (electionId) => !!hasVoted[votedKey(electionId)];
-
-  // ── Reset voter session when user changes (logout/login as different voter) ──
   useEffect(() => {
-    setVoterAuth({ done: false, voter: null });
-    setCurrentVoterElection(null);
-    setDraftVotes({});
-    setReceipt(null);
-    setBallotStep(0);
+    const currentNin = user?.nin ?? null;
+    if (prevNinRef.current !== null && prevNinRef.current !== currentNin) {
+      // User switched — reset voter session completely
+      setVoterAuth({ done: false, voter: null });
+      setCurrentVoterElection(null);
+      setDraftVotes({});
+      setReceipt(null);
+      setBallotStep(0);
+    }
+    prevNinRef.current = currentNin;
   }, [user?.nin]);
+
+  // ── didVote: safe check — only true if THIS voter cast a vote ─────────────────
+  function didVote(electionId) {
+    if (!user?.nin) return false;
+    return !!hasVoted[`${user.nin}:${electionId}`];
+  }
 
   // ── INEC-only mutations ───────────────────────────────────────────────────────
   function handleAddElection(newEl) {
@@ -69,9 +76,9 @@ function AppInner() {
     ));
   }
 
-  // ── Fix 2: include hash in vote payload so Supabase column is populated ──────
+  // ── Vote submission ───────────────────────────────────────────────────────────
   async function handleVoteSubmit() {
-    if (!isVoter) return;
+    if (!isVoter || !user?.nin) return;
     const el   = currentVoterElection;
     const code = generateReceiptCode();
 
@@ -81,13 +88,11 @@ function AppInner() {
       electionTitle: el.title,
       votes:         { ...draftVotes },
       timestamp:     new Date().toISOString(),
-      voterNin:      user.nin ? user.nin.slice(-4).padStart(11, "*") : "ANON",
+      voterNin:      user.nin.slice(-4).padStart(11, "*"), // anonymised
     };
 
-    // Commit to immutable lock — returns the hash
-    const hash = commitVote(newReceipt);
-
-    // Include hash in the payload sent to Supabase
+    // Lock receipt and get hash
+    const hash           = commitVote(newReceipt);
     const receiptWithHash = { ...newReceipt, hash };
 
     // Write to IndexedDB + POST to /api/votes
@@ -97,13 +102,15 @@ function AppInner() {
     setReceipts(prev => [...prev, receiptWithHash]);
     setReceipt(receiptWithHash);
 
-    // Key vote by "nin:electionId" so different voters are tracked independently
-    setHasVoted(prev => ({ ...prev, [votedKey(el.id)]: true }));
+    // Mark THIS voter as having voted in THIS election
+    setHasVoted(prev => ({
+      ...prev,
+      [`${user.nin}:${el.id}`]: true,
+    }));
 
     setElections(prev => prev.map(e =>
       e.id === el.id
-        ? {
-            ...e,
+        ? { ...e,
             votes_cast: e.votes_cast + 1,
             turnout: parseFloat(((e.votes_cast + 1) / e.registered_voters * 100).toFixed(2)),
           }
@@ -111,23 +118,30 @@ function AppInner() {
     ));
   }
 
-  // ── Receipt verification — check Supabase first, fallback to local ────────────
+  // ── Receipt verification ──────────────────────────────────────────────────────
   async function handleVerify(code) {
     const trimmed = code.trim().toUpperCase();
 
-    // 1. Check local receipts first (instant)
+    // Check local memory first (instant)
     const local = receipts.find(r => r.code === trimmed);
     if (local) {
       setVerifyResult({ valid: true, receipt: local });
       return;
     }
 
-    // 2. Check Supabase via GET /api/votes?code=
+    // Check Supabase via serverless function
     try {
       const res  = await fetch(`/api/votes?code=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
       if (data.valid) {
-        setVerifyResult({ valid: true, receipt: { code: data.receipt_code, electionTitle: data.election_title, timestamp: data.timestamp } });
+        setVerifyResult({
+          valid:   true,
+          receipt: {
+            code:          data.receipt_code,
+            electionTitle: data.election_title,
+            timestamp:     data.timestamp,
+          },
+        });
       } else {
         setVerifyResult({ valid: false });
       }
@@ -166,7 +180,7 @@ function AppInner() {
             voterAuth={voterAuth}                        setVoterAuth={setVoterAuth}
             currentVoterElection={currentVoterElection}  setCurrentVoterElection={setCurrentVoterElection}
             draftVotes={draftVotes}                      setDraftVotes={setDraftVotes}
-            hasVoted={hasVoted}                          didVote={didVote}
+            didVote={didVote}
             receipt={receipt}                            setReceipt={setReceipt}
             ballotStep={ballotStep}                      setBallotStep={setBallotStep}
             onVoteSubmit={handleVoteSubmit}

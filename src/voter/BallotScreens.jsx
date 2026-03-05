@@ -7,7 +7,7 @@
 
 // ── ElectionPickerScreen ──────────────────────────────────────────────────────
 // Shows all active elections. Marks elections the voter has already voted in.
-export function ElectionPickerScreen({ elections, hasVoted, didVote, voter, onPick }) {
+export function ElectionPickerScreen({ elections, didVote, voter, onPick }) {
   return (
     <div className="vote-portal">
       <div className="vote-hero">

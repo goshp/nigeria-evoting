@@ -8,7 +8,7 @@ export default function VoterView({
   voterAuth, setVoterAuth,
   currentVoterElection, setCurrentVoterElection,
   draftVotes, setDraftVotes,
-  hasVoted, didVote,
+  didVote,
   receipt, setReceipt,
   ballotStep, setBallotStep,
   onVoteSubmit,
@@ -16,7 +16,7 @@ export default function VoterView({
 }) {
   const { user } = useAuth();
 
-  // Auto-populate from global auth — no second login needed
+  // Auto-populate from global auth — runs once when user is available
   useEffect(() => {
     if (user?.role === "voter" && !voterAuth.done) {
       setVoterAuth({
@@ -88,7 +88,6 @@ export default function VoterView({
     return (
       <ElectionPickerScreen
         elections={activeElections}
-        hasVoted={hasVoted}
         didVote={didVote}
         voter={voterAuth.voter}
         onPick={handlePickElection}
@@ -100,7 +99,6 @@ export default function VoterView({
     <BallotScreen
       el={currentVoterElection}
       voter={voterAuth.voter}
-      hasVoted={hasVoted}
       didVote={didVote}
       draftVotes={draftVotes}
       setDraftVotes={setDraftVotes}
