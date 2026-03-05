@@ -1,23 +1,22 @@
 // ─── manager/CreateElectionTab.jsx ───────────────────────────────────────────
-// 4-step wizard for creating a new election:
-//   Step 1 – Election Details (title, type, date, hours)
-//   Step 2 – Voter Authentication methods
-//   Step 3 – Ballot builder (questions + candidates)
-//   Step 4 – Voter roll upload & summary submission
+// 4-step wizard for creating a new election.
+// Step 4 now has two submit options:
+//   "Save as Draft"   → status: "draft"  (visible only to INEC)
+//   "Save & Publish"  → status: "active" (voters can see and vote immediately)
 
 import { useState } from "react";
 
 const EMPTY_FORM = () => ({
-  id:                 "E" + Date.now(),
-  title:              "",
-  type:               "federal",
-  date:               "",
-  time_open:          "08:00",
-  time_close:         "18:00",
-  auth_method:        ["nin", "otp"],
-  registered_voters:  0,
-  status:             "draft",
-  ballots:            [],
+  id:                "E" + Date.now(),
+  title:             "",
+  type:              "federal",
+  date:              "",
+  time_open:         "08:00",
+  time_close:        "18:00",
+  auth_method:       ["nin", "otp"],
+  registered_voters: 0,
+  status:            "draft",
+  ballots:           [],
 });
 
 const EMPTY_BALLOT    = { title: "", description: "", candidates: [] };
@@ -29,8 +28,8 @@ export default function CreateElectionTab({ onAdd }) {
   const [newCandidate, setNewCandidate] = useState(EMPTY_CANDIDATE);
   const [voterFile,    setVoterFile]    = useState(null);
   const [step,         setStep]         = useState(1);
+  const [saved,        setSaved]        = useState(null); // "draft" | "active"
 
-  // ── helpers ──────────────────────────────────────────────────────────────
   function toggleAuth(method) {
     setForm(f => ({
       ...f,
@@ -57,36 +56,57 @@ export default function CreateElectionTab({ onAdd }) {
     setNewBallot(EMPTY_BALLOT);
   }
 
-  function handleSubmit() {
+  function handleSubmit(publishNow) {
     if (!form.title || !form.date || form.ballots.length === 0) return;
-    onAdd(form);
-    setStep(1);
-    setForm(EMPTY_FORM());
-    setVoterFile(null);
+    const finalForm = { ...form, status: publishNow ? "active" : "draft" };
+    onAdd(finalForm);
+    setSaved(publishNow ? "active" : "draft");
+    // Reset after short delay so INEC sees the success message
+    setTimeout(() => {
+      setStep(1);
+      setForm(EMPTY_FORM());
+      setVoterFile(null);
+      setSaved(null);
+    }, 3000);
   }
 
-  // ── step indicator ────────────────────────────────────────────────────────
-  const STEPS = ["Election Details", "Authentication", "Ballots & Candidates", "Voters & Submit"];
+  const STEPS = ["Election Details", "Authentication", "Ballots & Candidates", "Review & Submit"];
+
+  // ── Success banner ─────────────────────────────────────────────────────────
+  if (saved) {
+    return (
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"50vh", padding:"2rem", fontFamily:"var(--font-sans)" }}>
+        <div style={{ textAlign:"center", maxWidth:460 }}>
+          <div style={{ fontSize:"4rem", marginBottom:"1rem" }}>{saved === "active" ? "✅" : "💾"}</div>
+          <h2 style={{ color:"#004d29", marginBottom:"0.5rem" }}>
+            {saved === "active" ? "Election Published!" : "Election Saved as Draft"}
+          </h2>
+          <p style={{ color:"#555", lineHeight:1.7 }}>
+            {saved === "active"
+              ? "The election is now live. Registered voters can log in and cast their ballots immediately."
+              : "The election has been saved. Return to the Elections tab and click Publish when you are ready to open voting."}
+          </p>
+          <div style={{ marginTop:"1rem", fontSize:"0.8rem", color:"#aaa" }}>Returning to wizard…</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       <div className="section-title">Create New Election</div>
 
-      {/* Step Pills */}
-      <div style={{ display: "flex", gap: 0, marginBottom: "2rem" }}>
+      {/* Step pills */}
+      <div style={{ display:"flex", gap:0, marginBottom:"2rem" }}>
         {STEPS.map((label, i) => (
-          <div
-            key={i}
-            onClick={() => setStep(i + 1)}
-            style={{
-              flex: 1, padding: "0.7rem 1rem", cursor: "pointer", textAlign: "center",
-              fontSize: "0.8rem", fontWeight: 600, transition: "all 0.2s",
-              borderRight: i < 3 ? "1px solid rgba(255,255,255,0.2)" : undefined,
-              background: step === i + 1 ? "var(--green)" : step > i + 1 ? "var(--green-dark)" : "#f5f3ee",
-              color: step >= i + 1 ? "var(--white)" : "var(--gray)",
-            }}
-          >
-            <div style={{ fontSize: "0.7rem", opacity: 0.75, marginBottom: 2 }}>Step {i + 1}</div>
+          <div key={i} onClick={() => setStep(i + 1)} style={{
+            flex:1, padding:"0.7rem 1rem", cursor:"pointer", textAlign:"center",
+            fontSize:"0.8rem", fontWeight:600, transition:"all 0.2s",
+            borderRight: i < 3 ? "1px solid rgba(255,255,255,0.2)" : undefined,
+            background: step === i+1 ? "var(--green)" : step > i+1 ? "var(--green-dark)" : "#f5f3ee",
+            color: step >= i+1 ? "var(--white)" : "var(--gray)",
+          }}>
+            <div style={{ fontSize:"0.7rem", opacity:0.75, marginBottom:2 }}>Step {i+1}</div>
             {label}
           </div>
         ))}
@@ -100,17 +120,19 @@ export default function CreateElectionTab({ onAdd }) {
   );
 }
 
-// ── Step 1 – Election Details ─────────────────────────────────────────────────
+// ── Step 1 ────────────────────────────────────────────────────────────────────
 function Step1Details({ form, setForm, onNext }) {
   const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+  const valid = form.title && form.date;
   return (
     <div className="card">
       <div className="card-header"><div className="card-header-title">Election Details</div></div>
       <div className="card-body">
         <div className="form-grid mb-3">
           <div className="form-group form-full">
-            <label className="form-label">Election Title</label>
-            <input className="form-control" placeholder="e.g. 2027 Federal General Elections" value={form.title} onChange={e => f("title", e.target.value)} />
+            <label className="form-label">Election Title *</label>
+            <input className="form-control" placeholder="e.g. 2027 Federal General Elections"
+              value={form.title} onChange={e => f("title", e.target.value)} />
           </div>
           <div className="form-group">
             <label className="form-label">Election Type</label>
@@ -121,7 +143,7 @@ function Step1Details({ form, setForm, onNext }) {
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Election Date</label>
+            <label className="form-label">Election Date *</label>
             <input type="date" className="form-control" value={form.date} onChange={e => f("date", e.target.value)} />
           </div>
           <div className="form-group">
@@ -133,152 +155,130 @@ function Step1Details({ form, setForm, onNext }) {
             <input type="time" className="form-control" value={form.time_close} onChange={e => f("time_close", e.target.value)} />
           </div>
         </div>
-        <div className="flex" style={{ justifyContent: "flex-end" }}>
-          <button className="btn btn-primary" onClick={onNext}>Next: Authentication →</button>
+        <div className="flex gap-2" style={{ justifyContent:"flex-end" }}>
+          <button className="btn btn-primary" onClick={onNext} disabled={!valid}>Next: Authentication →</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Step 2 – Authentication ───────────────────────────────────────────────────
-const AUTH_OPTIONS = [
-  ["nin",       "🪪 NIN Verification",    "Voters enter their 11-digit National Identification Number to validate identity against NIMC records."],
-  ["otp",       "📱 OTP via SMS/Email",   "A one-time passcode is sent to the voter's registered phone number or email address."],
-  ["biometric", "👆 Biometric Thumbprint","Voter's thumbprint is captured and matched against INEC biometric database."],
-  ["photo",     "📷 Facial Recognition",  "Selfie verification matched against the voter's registered photograph."],
-];
-
+// ── Step 2 ────────────────────────────────────────────────────────────────────
 function Step2Auth({ form, toggleAuth, onBack, onNext }) {
+  const AUTH_OPTIONS = [
+    { key:"nin",        label:"NIN Verification",   desc:"11-digit National Identification Number checked against NIMC database" },
+    { key:"otp",        label:"OTP via SMS/Email",   desc:"6-digit one-time passcode sent to registered phone or email" },
+    { key:"biometric",  label:"Biometric Thumbprint",desc:"Fingerprint matched against INEC biometric register" },
+    { key:"facial",     label:"Facial Recognition",  desc:"Live face match against NIMC photo database" },
+  ];
   return (
     <div className="card">
       <div className="card-header"><div className="card-header-title">Voter Authentication Methods</div></div>
       <div className="card-body">
-        <p className="text-sm text-gray mb-3">
-          Select one or more authentication layers. Voters must pass all selected checks before accessing their ballot.
-        </p>
-        <div className="form-grid mb-3">
-          {AUTH_OPTIONS.map(([key, label, desc]) => {
-            const active = form.auth_method.includes(key);
-            return (
-              <div
-                key={key} onClick={() => toggleAuth(key)}
-                style={{ border: `2px solid ${active ? "var(--green)" : "var(--gray-light)"}`, borderRadius: "var(--radius)", padding: "1rem", cursor: "pointer", background: active ? "#e8f5ee" : "#fff", transition: "all 0.15s" }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div>
-                <div className="text-sm text-gray">{desc}</div>
-                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid var(--green)", background: active ? "var(--green)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {active && <span style={{ color: "#fff", fontSize: 10 }}>✓</span>}
-                  </div>
-                  <span className="text-sm" style={{ color: active ? "var(--green)" : "var(--gray)" }}>
-                    {active ? "Enabled" : "Disabled"}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="alert alert-info">
-          <span>ℹ️</span>
-          <span>Selected: <strong>{form.auth_method.join(", ").toUpperCase() || "None"}</strong>. At least one method required.</span>
-        </div>
-        <div className="flex gap-2" style={{ justifyContent: "flex-end" }}>
+        <p className="text-sm text-gray mb-3">Select one or more methods voters must complete before accessing their ballot.</p>
+        {AUTH_OPTIONS.map(opt => (
+          <div key={opt.key} onClick={() => toggleAuth(opt.key)} style={{
+            display:"flex", alignItems:"center", gap:"1rem", padding:"0.9rem 1rem",
+            border:`2px solid ${form.auth_method.includes(opt.key) ? "var(--green)" : "var(--gray-light)"}`,
+            borderRadius:"var(--radius)", marginBottom:"0.75rem", cursor:"pointer",
+            background: form.auth_method.includes(opt.key) ? "#e8f5ee" : "#fafafa",
+          }}>
+            <div style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${form.auth_method.includes(opt.key) ? "var(--green)" : "#ccc"}`, background: form.auth_method.includes(opt.key) ? "var(--green)" : "transparent", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              {form.auth_method.includes(opt.key) && <span style={{ color:"#fff", fontSize:"0.7rem" }}>✓</span>}
+            </div>
+            <div>
+              <div style={{ fontWeight:600, fontSize:"0.9rem" }}>{opt.label}</div>
+              <div style={{ fontSize:"0.78rem", color:"var(--gray)" }}>{opt.desc}</div>
+            </div>
+          </div>
+        ))}
+        <div className="flex gap-2" style={{ justifyContent:"flex-end", marginTop:"1rem" }}>
           <button className="btn btn-secondary" onClick={onBack}>← Back</button>
-          <button className="btn btn-primary"   onClick={onNext}>Next: Ballots →</button>
+          <button className="btn btn-primary"   onClick={onNext} disabled={form.auth_method.length === 0}>Next: Ballots →</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── Step 3 – Ballots & Candidates ─────────────────────────────────────────────
+// ── Step 3 ────────────────────────────────────────────────────────────────────
 function Step3Ballots({ form, newBallot, setNewBallot, newCandidate, setNewCandidate, addCandidate, addBallot, onBack, onNext }) {
   return (
-    <div>
-      <div className="card mb-3">
-        <div className="card-header">
-          <div className="card-header-title">Define Ballot Questions</div>
-          <span className="text-sm text-gray">{form.ballots.length} ballot{form.ballots.length !== 1 ? "s" : ""} added</span>
-        </div>
-        <div className="card-body">
-          {/* Saved ballots list */}
-          {form.ballots.length > 0 && (
-            <div className="mb-3">
-              {form.ballots.map((b, i) => (
-                <div key={b.id} style={{ padding: "0.8rem 1rem", background: "#f5f3ee", border: "1px solid var(--gray-light)", borderRadius: "var(--radius)", marginBottom: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>#{i + 1} {b.title}</div>
-                    <div className="text-sm text-gray">{b.candidates.length} candidates</div>
-                  </div>
-                  <span className="chip">✓ Added</span>
-                </div>
+    <div className="card">
+      <div className="card-header"><div className="card-header-title">Ballots & Candidates</div></div>
+      <div className="card-body">
+        {/* Existing ballots */}
+        {form.ballots.map((b, i) => (
+          <div key={b.id} style={{ background:"#f0f9f4", border:"1px solid #b8dfc9", borderRadius:"var(--radius)", padding:"0.9rem 1rem", marginBottom:"0.75rem" }}>
+            <div style={{ fontWeight:700, color:"var(--green-dark)", marginBottom:"0.3rem" }}>✅ Ballot {i+1}: {b.title}</div>
+            <div style={{ fontSize:"0.8rem", color:"var(--gray)" }}>{b.candidates.map(c => `${c.name} (${c.party})`).join(" · ")}</div>
+          </div>
+        ))}
+
+        {/* New ballot builder */}
+        <div style={{ border:"2px dashed var(--gray-light)", borderRadius:"var(--radius)", padding:"1.2rem", marginBottom:"1rem" }}>
+          <div className="form-label mb-2">Add Ballot Question</div>
+          <div className="form-grid mb-2">
+            <div className="form-group form-full">
+              <label className="form-label">Ballot Title</label>
+              <input className="form-control" placeholder="e.g. Presidential Election" value={newBallot.title} onChange={e => setNewBallot(b => ({ ...b, title: e.target.value }))} />
+            </div>
+            <div className="form-group form-full">
+              <label className="form-label">Description</label>
+              <input className="form-control" placeholder="e.g. Vote for President of the Federal Republic" value={newBallot.description} onChange={e => setNewBallot(b => ({ ...b, description: e.target.value }))} />
+            </div>
+          </div>
+
+          {/* Candidates */}
+          {newBallot.candidates.length > 0 && (
+            <div style={{ marginBottom:"0.75rem" }}>
+              {newBallot.candidates.map((c, i) => (
+                <span key={i} style={{ display:"inline-block", background:"var(--green-dark)", color:"#fff", borderRadius:"12px", padding:"0.2rem 0.75rem", fontSize:"0.78rem", marginRight:"0.4rem", marginBottom:"0.3rem" }}>
+                  {c.name} · {c.party}
+                </span>
               ))}
             </div>
           )}
 
-          {/* New ballot builder */}
-          <div style={{ border: "1.5px dashed var(--gray-light)", borderRadius: "var(--radius)", padding: "1.5rem" }}>
-            <div className="form-group mb-2">
-              <label className="form-label">Ballot Title</label>
-              <input className="form-control" placeholder="e.g. Presidential Election" value={newBallot.title} onChange={e => setNewBallot(b => ({ ...b, title: e.target.value }))} />
+          <div className="form-grid mb-2">
+            <div className="form-group">
+              <label className="form-label">Candidate Name</label>
+              <input className="form-control" placeholder="Full name" value={newCandidate.name} onChange={e => setNewCandidate(c => ({ ...c, name: e.target.value }))} />
             </div>
-            <div className="form-group mb-2">
-              <label className="form-label">Ballot Description / Instruction</label>
-              <input className="form-control" placeholder="e.g. Vote for one candidate only" value={newBallot.description} onChange={e => setNewBallot(b => ({ ...b, description: e.target.value }))} />
-            </div>
-
-            <div className="divider" />
-            <div className="form-label mb-2">Add Candidates</div>
-
-            {/* Candidate list preview */}
-            {newBallot.candidates.map(c => (
-              <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--green)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", fontWeight: 700 }}>{c.acronym}</div>
-                <span style={{ fontSize: "0.85rem" }}>{c.name} <span className="text-gray">· {c.party}</span></span>
-              </div>
-            ))}
-
-            {/* Add candidate fields */}
-            <div className="form-grid mt-1">
-              <div className="form-group">
-                <label className="form-label">Candidate Full Name</label>
-                <input className="form-control" placeholder="Full name" value={newCandidate.name} onChange={e => setNewCandidate(c => ({ ...c, name: e.target.value }))} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Political Party</label>
-                <input className="form-control" placeholder="APC, PDP, LP…" value={newCandidate.party} onChange={e => setNewCandidate(c => ({ ...c, party: e.target.value }))} />
-              </div>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <button className="btn btn-secondary btn-sm" onClick={addCandidate}>+ Add Candidate</button>
-              <button className="btn btn-primary   btn-sm" onClick={addBallot} disabled={!newBallot.title || newBallot.candidates.length < 2}>✓ Save Ballot</button>
+            <div className="form-group">
+              <label className="form-label">Party</label>
+              <input className="form-control" placeholder="APC, PDP, LP…" value={newCandidate.party} onChange={e => setNewCandidate(c => ({ ...c, party: e.target.value }))} />
             </div>
           </div>
+          <div className="flex gap-2">
+            <button className="btn btn-secondary btn-sm" onClick={addCandidate} disabled={!newCandidate.name || !newCandidate.party}>+ Add Candidate</button>
+            <button className="btn btn-primary btn-sm"   onClick={addBallot}    disabled={!newBallot.title || newBallot.candidates.length < 2}>✓ Save Ballot</button>
+          </div>
         </div>
-      </div>
 
-      <div className="flex gap-2" style={{ justifyContent: "flex-end" }}>
-        <button className="btn btn-secondary" onClick={onBack}>← Back</button>
-        <button className="btn btn-primary"   onClick={onNext} disabled={form.ballots.length === 0}>Next: Voters →</button>
+        <div className="flex gap-2" style={{ justifyContent:"flex-end" }}>
+          <button className="btn btn-secondary" onClick={onBack}>← Back</button>
+          <button className="btn btn-primary"   onClick={onNext} disabled={form.ballots.length === 0}>Next: Review →</button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Step 4 – Voters & Submit ──────────────────────────────────────────────────
+// ── Step 4 ────────────────────────────────────────────────────────────────────
 function Step4Submit({ form, setForm, voterFile, setVoterFile, onBack, onSubmit }) {
+  const isReady = form.title && form.date && form.ballots.length > 0;
   return (
     <div className="card">
-      <div className="card-header"><div className="card-header-title">Upload Eligible Voters & Submit</div></div>
+      <div className="card-header"><div className="card-header-title">Review & Submit</div></div>
       <div className="card-body">
+
         <div className="form-grid mb-3">
           <div className="form-group">
             <label className="form-label">Estimated Registered Voters</label>
             <input type="number" className="form-control" placeholder="e.g. 87000000"
               value={form.registered_voters || ""}
-              onChange={e => setForm(f => ({ ...f, registered_voters: parseInt(e.target.value) || 0 }))}
-            />
+              onChange={e => setForm(f => ({ ...f, registered_voters: parseInt(e.target.value) || 0 }))} />
           </div>
           <div className="form-group">
             <label className="form-label">Voter Roll Format</label>
@@ -290,47 +290,59 @@ function Step4Submit({ form, setForm, voterFile, setVoterFile, onBack, onSubmit 
           </div>
         </div>
 
-        {/* Upload zone */}
         <div className="upload-zone mb-3" onClick={() => setVoterFile("voters_roll.csv")}>
           <div className="upload-zone-icon">{voterFile ? "✅" : "📂"}</div>
           {voterFile
             ? <><p><strong>{voterFile}</strong></p><p className="text-sm text-green">Voter roll uploaded successfully</p></>
-            : <><p><strong>Click to upload voter roll</strong></p><p className="text-sm">CSV, XLSX, or JSON — up to 100M records</p></>
-          }
+            : <><p><strong>Click to upload voter roll</strong></p><p className="text-sm">CSV, XLSX, or JSON — up to 100M records</p></>}
         </div>
 
-        <div className="alert alert-warning mb-3">
-          <span>⚠️</span>
-          <span>All voter data is encrypted at rest and in transit. Only authentication hashes are stored — no personal data is retained after the election.</span>
-        </div>
-
-        {/* Summary table */}
-        <div style={{ background: "#f5f3ee", border: "1px solid var(--gray-light)", borderRadius: "var(--radius)", padding: "1.2rem", marginBottom: "1.5rem" }}>
+        {/* Summary */}
+        <div style={{ background:"#f5f3ee", border:"1px solid var(--gray-light)", borderRadius:"var(--radius)", padding:"1.2rem", marginBottom:"1.5rem" }}>
           <div className="form-label mb-2">Election Summary</div>
-          <table style={{ width: "100%", fontSize: "0.85rem", borderCollapse: "collapse" }}>
+          <table style={{ width:"100%", fontSize:"0.85rem", borderCollapse:"collapse" }}>
             <tbody>
               {[
                 ["Title",             form.title || "—"],
                 ["Type",              form.type],
                 ["Date",              form.date  || "—"],
-                ["Voting Hours",      `${form.time_open}–${form.time_close}`],
+                ["Voting Hours",      `${form.time_open} – ${form.time_close}`],
                 ["Auth Methods",      form.auth_method.join(", ") || "None"],
-                ["Ballots",           form.ballots.length],
+                ["Ballots",           `${form.ballots.length} ballot(s), ${form.ballots.reduce((n,b) => n + b.candidates.length, 0)} candidates total`],
                 ["Registered Voters", (form.registered_voters || 0).toLocaleString()],
               ].map(([k, v]) => (
                 <tr key={k}>
-                  <td style={{ padding: "0.4rem 0", color: "var(--gray)", width: "40%" }}>{k}</td>
-                  <td style={{ fontWeight: 600 }}>{v}</td>
+                  <td style={{ padding:"0.4rem 0", color:"var(--gray)", width:"40%" }}>{k}</td>
+                  <td style={{ fontWeight:600 }}>{v}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <div className="flex gap-2" style={{ justifyContent: "flex-end" }}>
+        {/* ── Two submit buttons ───────────────────────────────────────────── */}
+        <div style={{ background:"#fffbf0", border:"1px solid #f0c674", borderRadius:"10px", padding:"1rem 1.2rem", marginBottom:"1.2rem", fontSize:"0.84rem", color:"#5a4200" }}>
+          <strong>⚠️ Publishing is immediate.</strong> Once published, registered voters can log in and cast their votes right away. Save as Draft if you need to review before going live.
+        </div>
+
+        <div className="flex gap-2" style={{ justifyContent:"flex-end" }}>
           <button className="btn btn-secondary" onClick={onBack}>← Back</button>
-          <button className="btn btn-gold" onClick={onSubmit} disabled={!form.title || !form.date || form.ballots.length === 0}>
-            💾 Save Election as Draft
+          <button
+            className="btn btn-gold"
+            onClick={() => onSubmit(false)}
+            disabled={!isReady}
+            title="Save as draft — only visible to INEC admins"
+          >
+            💾 Save as Draft
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => onSubmit(true)}
+            disabled={!isReady}
+            title="Publish now — voters can vote immediately"
+            style={{ background:"linear-gradient(135deg, #006837, #1a8a4a)", fontWeight:700 }}
+          >
+            🚀 Save & Publish Now
           </button>
         </div>
       </div>
