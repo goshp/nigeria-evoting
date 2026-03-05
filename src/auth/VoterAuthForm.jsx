@@ -1,12 +1,5 @@
 // ─── auth/VoterAuthForm.jsx ───────────────────────────────────────────────────
-// Voter Login + Account Activation form.
-//
-// Login:      NIN + Password (activated accounts only)
-// Activation: Step 1 — enter NIN → system checks INEC roll
-//             Step 2 — NIN found & pending → choose password → activated
-//
-// Unauthorised NIns (not on roll) → error + LGA office guidance
-// Already active NIns on register tab → redirect to log in
+// Login and activation — all API calls are now async via Supabase.
 
 import { useState } from "react";
 import { useAuth } from "./AuthContext.jsx";
@@ -34,20 +27,15 @@ export default function VoterAuthForm() {
   );
 }
 
-// ── Login ─────────────────────────────────────────────────────────────────────
 function LoginTab() {
-  const { loginVoter, authError, setAuthError } = useAuth();
-  const [nin, setNin]         = useState("");
+  const { loginVoter, authError, setAuthError, authLoading } = useAuth();
+  const [nin, setNin]           = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading]   = useState(false);
   const [showPw, setShowPw]     = useState(false);
 
   async function handleLogin() {
     if (!nin.trim() || !password) { setAuthError("Please enter your NIN and password."); return; }
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 600));
-    loginVoter(nin.trim(), password);
-    setLoading(false);
+    await loginVoter(nin.trim(), password);
   }
 
   return (
@@ -64,60 +52,49 @@ function LoginTab() {
           onKeyDown={e => e.key === "Enter" && handleLogin()} />
         <EyeBtn show={showPw} toggle={() => setShowPw(p => !p)} />
       </div>
-      <Btn loading={loading} onClick={handleLogin} label="🗳️  Log In to Vote" />
+      <Btn loading={authLoading} onClick={handleLogin} label={authLoading ? "Verifying…" : "🗳️  Log In to Vote"} />
     </div>
   );
 }
 
-// ── Activation — 2-step ───────────────────────────────────────────────────────
 function ActivateTab() {
-  const { activateVoter, lookupVoterNin, authError, setAuthError } = useAuth();
-  const [step,     setStep]    = useState(1);
-  const [nin,      setNin]     = useState("");
-  const [voterName,setVoterName]= useState("");
-  const [password, setPassword]= useState("");
-  const [confirm,  setConfirm] = useState("");
-  const [loading,  setLoading] = useState(false);
-  const [showPw,   setShowPw]  = useState(false);
+  const { activateVoter, lookupVoterNin, authError, setAuthError, authLoading } = useAuth();
+  const [step,      setStep]     = useState(1);
+  const [nin,       setNin]      = useState("");
+  const [voterName, setVoterName]= useState("");
+  const [password,  setPassword] = useState("");
+  const [confirm,   setConfirm]  = useState("");
+  const [showPw,    setShowPw]   = useState(false);
+  const [looking,   setLooking]  = useState(false);
 
-  // Step 1 — NIN lookup
   async function handleLookup() {
     setAuthError(null);
     if (!/^\d{11}$/.test(nin.trim())) {
       setAuthError("NIN must be exactly 11 digits with no spaces or dashes."); return;
     }
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 700));
-    const result = lookupVoterNin(nin.trim());
-    setLoading(false);
-
-    if (result.status === "not_found") return; // authError already set
-    if (result.status === "active")    return; // authError already set
+    setLooking(true);
+    const result = await lookupVoterNin(nin.trim());
+    setLooking(false);
     if (result.status === "pending") {
       setVoterName(result.name);
       setStep(2);
     }
   }
 
-  // Step 2 — set password
   async function handleActivate() {
     setAuthError(null);
     if (!password) { setAuthError("Please choose a password."); return; }
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 700));
-    activateVoter(nin.trim(), password, confirm);
-    setLoading(false);
+    await activateVoter(nin.trim(), password, confirm);
   }
 
   return (
     <div style={wrap}>
-      <div style={{ ...hintBox, background: "#e8f5ee", border: "1px solid #c3e6cb", color: "#155724" }}>
-        <strong>First time?</strong> Your NIN must be on the INEC register. If it is, you simply choose a password once to activate your portal access.
+      <div style={{ ...hintBox, color: "#155724" }}>
+        <strong>First time?</strong> Your NIN must be on the INEC register. Enter it below to activate your account.
       </div>
 
       {authError && <ActivationError msg={authError} />}
 
-      {/* ── Step 1: NIN ── */}
       {step === 1 && (
         <>
           <Field label="National Identification Number (NIN)" value={nin} maxLength={11}
@@ -126,8 +103,8 @@ function ActivateTab() {
           <div style={{ fontSize: "0.75rem", color: "#888", margin: "0.3rem 0 0.6rem" }}>
             Found on your National Identity Card or NIMC slip.
           </div>
-          <Btn loading={loading} onClick={handleLookup}
-            label={loading ? "Checking register…" : "Check My NIN →"}
+          <Btn loading={looking} onClick={handleLookup}
+            label={looking ? "Checking register…" : "Check My NIN →"}
             disabled={nin.trim().length !== 11} />
           <p style={{ textAlign: "center", fontSize: "0.71rem", color: "#bbb", marginTop: "0.75rem" }}>
             Pending NIns for demo: 67890123456 · 78901234567 · 89012345678
@@ -135,12 +112,11 @@ function ActivateTab() {
         </>
       )}
 
-      {/* ── Step 2: Set password ── */}
       {step === 2 && (
         <>
           <div style={{ background: "#f0f9f4", border: "1px solid #b8dfc9", borderRadius: "9px", padding: "0.8rem 1rem", marginBottom: "1rem", fontSize: "0.85rem" }}>
             <div style={{ fontWeight: 700, color: "#004d29", marginBottom: "0.2rem" }}>✅ NIN Verified</div>
-            <div>Welcome, <strong>{voterName}</strong>. Your NIN <strong>{nin}</strong> is on the INEC register. Choose a password to activate your account.</div>
+            <div>Welcome, <strong>{voterName}</strong>. Choose a password to activate your account.</div>
           </div>
           <label style={lbl}>Choose a Password</label>
           <div style={{ position: "relative" }}>
@@ -157,7 +133,8 @@ function ActivateTab() {
               style={{ flex: "0 0 auto", background: "#eee", color: "#444", border: "none", borderRadius: "10px", padding: "0.85rem 1.1rem", cursor: "pointer", fontSize: "0.88rem" }}>
               ← Back
             </button>
-            <Btn loading={loading} onClick={handleActivate} label={loading ? "Activating…" : "✅  Activate & Enter Portal"} style={{ flex: 1 }} />
+            <Btn loading={authLoading} onClick={handleActivate}
+              label={authLoading ? "Activating…" : "✅  Activate & Enter Portal"} />
           </div>
           <p style={{ textAlign: "center", fontSize: "0.71rem", color: "#aaa", marginTop: "0.75rem" }}>
             Fraudulent activation is an offence under the Electoral Act 2022.
@@ -168,15 +145,10 @@ function ActivateTab() {
   );
 }
 
-// ── Activation error — handles "not found" case with LGA guidance ─────────────
 function ActivationError({ msg }) {
   const isNotFound = msg.includes("not found") || msg.includes("not on") || msg.includes("NIN not");
   return (
-    <div style={{
-      background: "#fffbf0", borderLeft: `5px solid ${isNotFound ? "#c9a84c" : "#dc3545"}`,
-      border: `1px solid ${isNotFound ? "#f0c674" : "#f5c6cb"}`,
-      borderRadius: "8px", padding: "0.9rem 1rem", marginBottom: "1rem", fontSize: "0.82rem",
-    }}>
+    <div style={{ background: "#fffbf0", borderLeft: `5px solid ${isNotFound ? "#c9a84c" : "#dc3545"}`, border: `1px solid ${isNotFound ? "#f0c674" : "#f5c6cb"}`, borderRadius: "8px", padding: "0.9rem 1rem", marginBottom: "1rem", fontSize: "0.82rem" }}>
       {isNotFound ? (
         <>
           <div style={{ fontWeight: 700, color: "#856404", marginBottom: "0.5rem" }}>⚠️ NIN Not Found on Electoral Register</div>
@@ -195,14 +167,12 @@ function ActivationError({ msg }) {
   );
 }
 
-// ── Shared primitives ─────────────────────────────────────────────────────────
 function Field({ label, value, onChange, placeholder, maxLength, type = "text", onEnter, autoFocus }) {
   return (
     <>
       <label style={lbl}>{label}</label>
       <input style={inp} type={type} placeholder={placeholder} value={value} maxLength={maxLength}
-        autoFocus={autoFocus}
-        onChange={e => onChange(e.target.value)}
+        autoFocus={autoFocus} onChange={e => onChange(e.target.value)}
         onKeyDown={e => e.key === "Enter" && onEnter?.()} />
     </>
   );
@@ -224,7 +194,7 @@ function ErrBox({ msg }) {
   );
 }
 
-function Btn({ loading, onClick, label, disabled, style = {} }) {
+function Btn({ loading, onClick, label, disabled }) {
   return (
     <button disabled={loading || disabled} onClick={onClick} style={{
       width: "100%", marginTop: "1.2rem",
@@ -232,7 +202,6 @@ function Btn({ loading, onClick, label, disabled, style = {} }) {
       color: "#fff", border: "none", borderRadius: "10px",
       padding: "0.85rem", fontSize: "0.95rem", fontWeight: 700,
       cursor: (loading || disabled) ? "not-allowed" : "pointer",
-      ...style,
     }}>{label}</button>
   );
 }
