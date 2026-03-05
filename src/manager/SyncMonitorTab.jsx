@@ -16,7 +16,10 @@ export default function SyncMonitorTab({ isOnline, syncStatus }) {
     setStats(s);
   }
 
-  useEffect(() => { refresh(); }, [syncStatus]);
+  useEffect(() => {
+    async function load() { await refresh(); }
+    load();
+  }, [syncStatus]);
 
   async function handleManualSync() {
     if (!isOnline) { setMessage({ type: "error", text: "Cannot sync — device is offline." }); return; }
