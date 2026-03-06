@@ -29,6 +29,8 @@ export default function CreateElectionTab({ onAdd }) {
   const [voterFile,    setVoterFile]    = useState(null);
   const [step,         setStep]         = useState(1);
   const [saved,        setSaved]        = useState(null); // "draft" | "active"
+  const [saving,       setSaving]       = useState(false);
+  const [submitError,  setSubmitError]  = useState(null);
 
   function toggleAuth(method) {
     setForm(f => ({
@@ -56,18 +58,25 @@ export default function CreateElectionTab({ onAdd }) {
     setNewBallot(EMPTY_BALLOT);
   }
 
-  function handleSubmit(publishNow) {
+  async function handleSubmit(publishNow) {
     if (!form.title || !form.date || form.ballots.length === 0) return;
+    setSaving(true);
+    setSubmitError(null);
     const finalForm = { ...form, status: publishNow ? "active" : "draft" };
-    onAdd(finalForm);
-    setSaved(publishNow ? "active" : "draft");
-    // Reset after short delay so INEC sees the success message
-    setTimeout(() => {
-      setStep(1);
-      setForm(EMPTY_FORM());
-      setVoterFile(null);
-      setSaved(null);
-    }, 3000);
+    try {
+      await onAdd(finalForm);
+      setSaved(publishNow ? "active" : "draft");
+      setTimeout(() => {
+        setStep(1);
+        setForm(EMPTY_FORM());
+        setVoterFile(null);
+        setSaved(null);
+      }, 3000);
+    } catch (err) {
+      setSubmitError("Failed to save election. Please check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const STEPS = ["Election Details", "Authentication", "Ballots & Candidates", "Review & Submit"];
@@ -115,7 +124,7 @@ export default function CreateElectionTab({ onAdd }) {
       {step === 1 && <Step1Details    form={form} setForm={setForm} onNext={() => setStep(2)} />}
       {step === 2 && <Step2Auth       form={form} toggleAuth={toggleAuth} onBack={() => setStep(1)} onNext={() => setStep(3)} />}
       {step === 3 && <Step3Ballots    form={form} newBallot={newBallot} setNewBallot={setNewBallot} newCandidate={newCandidate} setNewCandidate={setNewCandidate} addCandidate={addCandidate} addBallot={addBallot} onBack={() => setStep(2)} onNext={() => setStep(4)} />}
-      {step === 4 && <Step4Submit     form={form} setForm={setForm} voterFile={voterFile} setVoterFile={setVoterFile} onBack={() => setStep(3)} onSubmit={handleSubmit} />}
+      {step === 4 && <Step4Submit     form={form} setForm={setForm} voterFile={voterFile} setVoterFile={setVoterFile} onBack={() => setStep(3)} onSubmit={handleSubmit} saving={saving} submitError={submitError} />}
     </div>
   );
 }
@@ -266,7 +275,7 @@ function Step3Ballots({ form, newBallot, setNewBallot, newCandidate, setNewCandi
 }
 
 // ── Step 4 ────────────────────────────────────────────────────────────────────
-function Step4Submit({ form, setForm, voterFile, setVoterFile, onBack, onSubmit }) {
+function Step4Submit({ form, setForm, voterFile, setVoterFile, onBack, onSubmit, saving, submitError }) {
   const isReady = form.title && form.date && form.ballots.length > 0;
   return (
     <div className="card">
@@ -325,24 +334,30 @@ function Step4Submit({ form, setForm, voterFile, setVoterFile, onBack, onSubmit 
           <strong>⚠️ Publishing is immediate.</strong> Once published, registered voters can log in and cast their votes right away. Save as Draft if you need to review before going live.
         </div>
 
+        {submitError && (
+          <div style={{ background:"#f8d7da", border:"1px solid #f5c6cb", borderRadius:"8px", padding:"0.8rem 1rem", marginBottom:"1rem", fontSize:"0.85rem", color:"#721c24" }}>
+            ❌ {submitError}
+          </div>
+        )}
+
         <div className="flex gap-2" style={{ justifyContent:"flex-end" }}>
-          <button className="btn btn-secondary" onClick={onBack}>← Back</button>
+          <button className="btn btn-secondary" onClick={onBack} disabled={saving}>← Back</button>
           <button
             className="btn btn-gold"
             onClick={() => onSubmit(false)}
-            disabled={!isReady}
+            disabled={!isReady || saving}
             title="Save as draft — only visible to INEC admins"
           >
-            💾 Save as Draft
+            {saving ? "⏳ Saving…" : "💾 Save as Draft"}
           </button>
           <button
             className="btn btn-primary"
             onClick={() => onSubmit(true)}
-            disabled={!isReady}
+            disabled={!isReady || saving}
             title="Publish now — voters can vote immediately"
             style={{ background:"linear-gradient(135deg, #006837, #1a8a4a)", fontWeight:700 }}
           >
-            🚀 Save & Publish Now
+            {saving ? "⏳ Publishing…" : "🚀 Save & Publish Now"}
           </button>
         </div>
       </div>

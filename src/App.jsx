@@ -83,21 +83,14 @@ function AppInner() {
   // ── INEC election management — POST/PATCH to Supabase via API ────────────────
   async function handleAddElection(newEl) {
     if (!isInec) return;
-    try {
-      const res  = await fetch("/api/elections", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ ...newEl, created_by: user.staffId }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        await fetchElections(); // refresh immediately
-      } else {
-        console.error("Create election failed:", data.error);
-      }
-    } catch (err) {
-      console.error("Create election error:", err.message);
-    }
+    const res  = await fetch("/api/elections", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ ...newEl, created_by: user.staffId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to save election");
+    await fetchElections();
   }
 
   async function handlePublish(id) {
