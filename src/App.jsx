@@ -1,6 +1,8 @@
 // ─── App.jsx ──────────────────────────────────────────────────────────────────
-// Elections now load from Supabase and poll every 10 seconds.
-// All browsers share the same election state.
+// - Elections load from Supabase, poll every 10s
+// - Active elections auto-close when date+time_close passes
+// - Closed elections fetch live tallied results from /api/results
+// - Once all elections are closed, everyone gets read-only access
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -19,6 +21,17 @@ import ResultsView from "./results/ResultsView.jsx";
 
 const POLL_INTERVAL = 10000; // 10 seconds
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Returns true if an active election's close time has passed
+function isExpired(election) {
+  if (election.status !== "active") return false;
+  try {
+    const closeStr = `${election.date}T${election.time_close}:00`;
+    return new Date(closeStr) < new Date();
+  } catch { return false; }
+}
+
 function AppInner() {
   const { user, isInec, isVoter, isGuest, commitVote, didVote, markVoted } = useAuth();
 
@@ -27,24 +40,69 @@ function AppInner() {
 
   const { isOnline, syncStatus, queueStats, submitVote } = useOfflineSync();
 
-  // ── Elections — loaded from Supabase, polled every 10s ───────────────────────
-  const [elections,    setElections]    = useState([]);
-  const [electionsLoading, setElectionsLoading] = useState(true);
+  // ── Elections from Supabase ───────────────────────────────────────────────────
+  const [elections,         setElections]         = useState([]);
+  const [electionsLoading,  setElectionsLoading]  = useState(true);
   const pollRef = useRef(null);
+
+  // Auto-close any active election whose time has passed, then fetch tallied results
+  const autoCloseExpired = useCallback(async (els) => {
+    const expired = els.filter(isExpired);
+    for (const el of expired) {
+      await fetch(`/api/elections?id=${encodeURIComponent(el.id)}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ status: "closed" }),
+      });
+    }
+    return expired.length > 0; // true = need a fresh fetch
+  }, []);
+
+  // Fetch live tallied results for all closed elections from /api/results
+  const enrichWithResults = useCallback(async (els) => {
+    const closed = els.filter(e => e.status === "closed");
+    if (closed.length === 0) return els;
+
+    const enriched = await Promise.all(
+      closed.map(async (el) => {
+        try {
+          const res  = await fetch(`/api/results?electionId=${encodeURIComponent(el.id)}`);
+          const data = await res.json();
+          return res.ok ? data : el;
+        } catch { return el; }
+      })
+    );
+
+    const enrichedMap = Object.fromEntries(enriched.map(e => [e.id, e]));
+    return els.map(e => enrichedMap[e.id] || e);
+  }, []);
 
   const fetchElections = useCallback(async () => {
     try {
       const res  = await fetch("/api/elections");
       const data = await res.json();
-      if (res.ok && Array.isArray(data)) {
-        setElections(data);
+      if (!res.ok || !Array.isArray(data)) return;
+
+      // Auto-close any expired elections first
+      const didClose = await autoCloseExpired(data);
+
+      // If we closed something, do one more fetch to get updated statuses
+      let latest = data;
+      if (didClose) {
+        const res2  = await fetch("/api/elections");
+        const data2 = await res2.json();
+        if (res2.ok && Array.isArray(data2)) latest = data2;
       }
+
+      // Enrich closed elections with live tallied results
+      const enriched = await enrichWithResults(latest);
+      setElections(enriched);
     } catch (err) {
       console.warn("[elections] Fetch failed:", err.message);
     } finally {
       setElectionsLoading(false);
     }
-  }, []);
+  }, [autoCloseExpired, enrichWithResults]);
 
   useEffect(() => {
     fetchElections();
@@ -52,7 +110,13 @@ function AppInner() {
     return () => clearInterval(pollRef.current);
   }, [fetchElections]);
 
-  // ── Voter session state ───────────────────────────────────────────────────────
+  // ── Global read-only lock ─────────────────────────────────────────────────────
+  // True when there is at least one election AND every election is closed.
+  // In this state no one can create, vote, or modify anything.
+  const allClosed = elections.length > 0 && elections.every(e => e.status === "closed");
+  const isReadOnly = allClosed; // extend with role checks if needed
+
+  // ── Voter session ─────────────────────────────────────────────────────────────
   const [voterAuth,            setVoterAuth]            = useState({ done: false, voter: null });
   const [currentVoterElection, setCurrentVoterElection] = useState(null);
   const [draftVotes,           setDraftVotes]           = useState({});
@@ -61,8 +125,8 @@ function AppInner() {
   const [receipts,             setReceipts]             = useState([]);
   const [verifyCode,           setVerifyCode]           = useState("");
   const [verifyResult,         setVerifyResult]         = useState(null);
+  const [voteError,            setVoteError]            = useState(null);
 
-  // Reset voter session when user changes
   const prevNinRef = useRef(null);
   useEffect(() => {
     const currentNin = user?.nin ?? null;
@@ -76,13 +140,11 @@ function AppInner() {
     prevNinRef.current = currentNin;
   }, [user?.nin]);
 
-  function didVoteForElection(electionId) {
-    return didVote(electionId);
-  }
+  function didVoteForElection(electionId) { return didVote(electionId); }
 
-  // ── INEC election management — POST/PATCH to Supabase via API ────────────────
+  // ── INEC election management ──────────────────────────────────────────────────
   async function handleAddElection(newEl) {
-    if (!isInec) return;
+    if (!isInec || isReadOnly) return;
     const res  = await fetch("/api/elections", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
@@ -94,50 +156,35 @@ function AppInner() {
   }
 
   async function handlePublish(id) {
-    if (!isInec) return;
-    try {
-      await fetch(`/api/elections?id=${encodeURIComponent(id)}`, {
-        method:  "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ status: "active" }),
-      });
-      await fetchElections();
-    } catch (err) {
-      console.error("Publish error:", err.message);
-    }
+    if (!isInec || isReadOnly) return;
+    await fetch(`/api/elections?id=${encodeURIComponent(id)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    });
+    await fetchElections();
   }
 
   async function handleClose(id) {
     if (!isInec) return;
-    try {
-      await fetch(`/api/elections?id=${encodeURIComponent(id)}`, {
-        method:  "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ status: "closed" }),
-      });
-      await fetchElections();
-    } catch (err) {
-      console.error("Close error:", err.message);
-    }
+    await fetch(`/api/elections?id=${encodeURIComponent(id)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "closed" }),
+    });
+    await fetchElections();
   }
 
   // ── Vote submission ───────────────────────────────────────────────────────────
-  const [voteError, setVoteError] = useState(null);
-
   async function handleVoteSubmit() {
-    if (!isVoter || !user?.nin) return;
+    if (!isVoter || !user?.nin || isReadOnly) return;
     const el = currentVoterElection;
 
-    // Client-side guard — already voted in this election
     if (didVoteForElection(el.id)) {
-      setVoteError("You have already voted in this election.");
-      return;
+      setVoteError("You have already voted in this election."); return;
     }
 
     setVoteError(null);
-    const code = generateReceiptCode();
-
-    const newReceipt = {
+    const code        = generateReceiptCode();
+    const newReceipt  = {
       code,
       electionId:    el.id,
       electionTitle: el.title,
@@ -149,44 +196,35 @@ function AppInner() {
     const hash            = commitVote(newReceipt);
     const receiptWithHash = { ...newReceipt, hash };
 
-    // POST to /api/votes — server enforces one vote per voter per election
     const res = await fetch("/api/votes", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(receiptWithHash),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(receiptWithHash),
     });
 
     if (res.status === 409) {
-      // Server says already voted — mark locally and show error
       markVoted(user.nin, el.id);
-      setVoteError("Your vote for this election has already been recorded.");
-      return;
+      setVoteError("Your vote for this election has already been recorded."); return;
     }
-
     if (!res.ok) {
-      setVoteError("Failed to submit vote — please check your connection and try again.");
-      return;
+      setVoteError("Failed to submit vote — please check your connection and try again."); return;
     }
 
-    // Also enqueue for offline sync resilience
     await submitVote(receiptWithHash);
-
     markVoted(user.nin, el.id);
     setReceipts(prev => [...prev, receiptWithHash]);
     setReceipt(receiptWithHash);
 
-    // Update votes_cast in Supabase
-    const current = elections.find(e => e.id === el.id);
-    if (current) {
-      const newCount   = (current.votes_cast || 0) + 1;
-      const newTurnout = parseFloat((newCount / current.registered_voters * 100).toFixed(2));
-      await fetch(`/api/elections?id=${encodeURIComponent(el.id)}`, {
-        method:  "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ votes_cast: newCount, turnout: newTurnout }),
-      });
-      await fetchElections();
-    }
+    // Update votes_cast tally
+    const current    = elections.find(e => e.id === el.id);
+    const newCount   = (current?.votes_cast || 0) + 1;
+    const newTurnout = current?.registered_voters
+      ? parseFloat((newCount / current.registered_voters * 100).toFixed(2))
+      : 0;
+    await fetch(`/api/elections?id=${encodeURIComponent(el.id)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ votes_cast: newCount, turnout: newTurnout }),
+    });
+    await fetchElections();
   }
 
   // ── Receipt verification ──────────────────────────────────────────────────────
@@ -194,18 +232,13 @@ function AppInner() {
     const trimmed = code.trim().toUpperCase();
     const local   = receipts.find(r => r.code === trimmed);
     if (local) { setVerifyResult({ valid: true, receipt: local }); return; }
-
     try {
       const res  = await fetch(`/api/votes?code=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
-      if (data.valid) {
-        setVerifyResult({ valid: true, receipt: { code: data.receipt_code, electionTitle: data.election_title, timestamp: data.timestamp } });
-      } else {
-        setVerifyResult({ valid: false });
-      }
-    } catch {
-      setVerifyResult({ valid: false });
-    }
+      setVerifyResult(data.valid
+        ? { valid: true, receipt: { code: data.receipt_code, electionTitle: data.election_title, timestamp: data.timestamp } }
+        : { valid: false });
+    } catch { setVerifyResult({ valid: false }); }
   }
 
   if (isGuest) return <LandingPage />;
@@ -216,9 +249,16 @@ function AppInner() {
       <Nav view={view} setView={setView} isOnline={isOnline} queueStats={queueStats} />
       <ConnectivityBar isOnline={isOnline} syncStatus={syncStatus} queueStats={queueStats} />
 
+      {/* Global read-only banner — shown to everyone when all elections are closed */}
+      {isReadOnly && !electionsLoading && (
+        <div style={{ background:"#004d29", color:"#fff", textAlign:"center", padding:"0.6rem 1rem", fontSize:"0.82rem", letterSpacing:"0.03em" }}>
+          🔒 All elections have closed. Results are now officially published. This system is in read-only mode.
+        </div>
+      )}
+
       {electionsLoading && (
-        <div style={{ textAlign: "center", padding: "3rem", color: "#666", fontFamily: "var(--font-sans)" }}>
-          <div style={{ fontSize: "2rem", marginBottom: "0.75rem" }}>⏳</div>
+        <div style={{ textAlign:"center", padding:"3rem", color:"#666", fontFamily:"var(--font-sans)" }}>
+          <div style={{ fontSize:"2rem", marginBottom:"0.75rem" }}>⏳</div>
           <div>Loading elections from INEC server…</div>
         </div>
       )}
@@ -236,24 +276,44 @@ function AppInner() {
                 isOnline={isOnline}
                 syncStatus={syncStatus}
                 queueStats={queueStats}
+                readOnly={isReadOnly}
               />
             </ProtectedRoute>
           )}
 
           {view === "voter" && (
             <ProtectedRoute role="voter">
-              <VoterView
-                elections={elections}
-                voterAuth={voterAuth}                        setVoterAuth={setVoterAuth}
-                currentVoterElection={currentVoterElection}  setCurrentVoterElection={setCurrentVoterElection}
-                draftVotes={draftVotes}                      setDraftVotes={setDraftVotes}
-                didVote={didVoteForElection}
-                receipt={receipt}                            setReceipt={setReceipt}
-                ballotStep={ballotStep}                      setBallotStep={setBallotStep}
-                onVoteSubmit={handleVoteSubmit}
-                voteError={voteError}                        setVoteError={setVoteError}
-                isOnline={isOnline}
-              />
+              {isReadOnly
+                ? (
+                  // Voting is over — redirect voter straight to results
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"60vh", padding:"2rem", fontFamily:"var(--font-sans)" }}>
+                    <div style={{ textAlign:"center", maxWidth:500 }}>
+                      <div style={{ fontSize:"3.5rem", marginBottom:"1rem" }}>🗳️</div>
+                      <h2 style={{ color:"#004d29", marginBottom:"0.5rem" }}>Voting Has Closed</h2>
+                      <p style={{ color:"#666", lineHeight:1.7, marginBottom:"1.5rem" }}>
+                        All elections have ended. Official results are now published.
+                      </p>
+                      <button className="btn btn-primary" onClick={() => setView("results")}>
+                        📊 View Official Results →
+                      </button>
+                    </div>
+                  </div>
+                )
+                : (
+                  <VoterView
+                    elections={elections}
+                    voterAuth={voterAuth}                        setVoterAuth={setVoterAuth}
+                    currentVoterElection={currentVoterElection}  setCurrentVoterElection={setCurrentVoterElection}
+                    draftVotes={draftVotes}                      setDraftVotes={setDraftVotes}
+                    didVote={didVoteForElection}
+                    receipt={receipt}                            setReceipt={setReceipt}
+                    ballotStep={ballotStep}                      setBallotStep={setBallotStep}
+                    onVoteSubmit={handleVoteSubmit}
+                    voteError={voteError}                        setVoteError={setVoteError}
+                    isOnline={isOnline}
+                  />
+                )
+              }
             </ProtectedRoute>
           )}
 
@@ -262,7 +322,7 @@ function AppInner() {
               elections={elections}
               verifyCode={verifyCode}      setVerifyCode={setVerifyCode}
               verifyResult={verifyResult}  onVerify={handleVerify}
-              readOnly={!isInec}
+              readOnly={true}
             />
           )}
         </>
