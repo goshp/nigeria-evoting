@@ -29,8 +29,9 @@ export default async function handler(req, res) {
 
     // Return list of election_ids this voter has already voted in
     if (nin) {
+      const maskedNin = nin.slice(-4).padStart(11, "*");
       const sbRes  = await fetch(
-        `${SUPABASE_URL}/rest/v1/votes?voter_nin=eq.${encodeURIComponent(nin)}&select=election_id`,
+        `${SUPABASE_URL}/rest/v1/votes?voter_nin=eq.${encodeURIComponent(maskedNin)}&select=election_id`,
         { headers: sbHeaders }
       );
       const data = await sbRes.json();
@@ -50,7 +51,19 @@ export default async function handler(req, res) {
       return res.status(200).json({ valid: true, receipt_code: data[0].receipt_code, election_title: data[0].election_title, timestamp: data[0].created_at });
     }
 
-    return res.status(400).json({ error: "Provide ?code= or ?nin=" });
+    // Audit log: all votes for INEC dashboard
+    const { audit } = req.query;
+    if (audit) {
+      const sbRes  = await fetch(
+        `${SUPABASE_URL}/rest/v1/votes?select=receipt_code,election_title,created_at&order=created_at.desc`,
+        { headers: sbHeaders }
+      );
+      const data = await sbRes.json();
+      if (!sbRes.ok) return res.status(sbRes.status).json({ error: data });
+      return res.status(200).json({ votes: data });
+    }
+
+    return res.status(400).json({ error: "Provide ?code= or ?nin= or ?audit=1" });
   }
 
   // ── POST /api/votes — submit vote ─────────────────────────────────────────────
@@ -69,12 +82,13 @@ export default async function handler(req, res) {
     const results = [];
 
     for (const vote of votes) {
-      const voterNin   = vote.voterNin || "ANON";
-      const electionId = vote.electionId;
+      const voterNin       = vote.voterNin || "ANON";
+      const maskedNin      = voterNin.slice(-4).padStart(11, "*");
+      const electionId     = vote.electionId;
 
       // ── Check: has this voter already voted in this election? ─────────────────
       const checkRes  = await fetch(
-        `${SUPABASE_URL}/rest/v1/votes?voter_nin=eq.${encodeURIComponent(voterNin)}&election_id=eq.${encodeURIComponent(electionId)}&select=receipt_code`,
+        `${SUPABASE_URL}/rest/v1/votes?voter_nin=eq.${encodeURIComponent(maskedNin)}&election_id=eq.${encodeURIComponent(electionId)}&select=receipt_code`,
         { headers: sbHeaders }
       );
       const existing = await checkRes.json();
@@ -97,7 +111,7 @@ export default async function handler(req, res) {
           election_id:    electionId,
           election_title: vote.electionTitle || "Unknown Election",
           votes_data:     vote.votes,
-          voter_nin:      voterNin,
+          voter_nin:      voterNin.slice(-4).padStart(11, "*"),  // store masked for privacy
           hash:           vote.hash || "",
           synced_at:      new Date().toISOString(),
         }),

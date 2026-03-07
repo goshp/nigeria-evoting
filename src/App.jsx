@@ -190,7 +190,7 @@ function AppInner() {
       electionTitle: el.title,
       votes:         { ...draftVotes },
       timestamp:     new Date().toISOString(),
-      voterNin:      user.nin.slice(-4).padStart(11, "*"),
+      voterNin:      user.nin,  // real NIN needed for server-side duplicate check
     };
 
     const hash            = commitVote(newReceipt);

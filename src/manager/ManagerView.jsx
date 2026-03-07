@@ -65,7 +65,7 @@ export default function ManagerView({ elections, onAddElection, onPublish, onClo
           <ReportsTab elections={elections} />
         )}
         {activeTab === "audit" && (
-          <AuditTab receipts={receipts} />
+          <AuditTab />
         )}
         {activeTab === "sync" && (
           <SyncMonitorTab isOnline={isOnline} syncStatus={syncStatus} queueStats={queueStats} />
