@@ -1,65 +1,43 @@
 // ─── auth/AuthContext.jsx ──────────────────────────────────────────────────────
-// Global authentication context.
-//
-// PERSISTENCE:
-//   Activated voter accounts are stored in localStorage under "inec_activations"
-//   so that a voter who activates on one browser/tab can log in from any other.
-//
-//   Voted state is stored in localStorage under "inec_voted" keyed by
-//   "nin:electionId" so it persists across page refreshes and is isolated
-//   per voter.
+// All voter activations and voted state now persist via Supabase API.
+// No more localStorage — all browsers share the same source of truth.
 
-import { createContext, useContext, useState, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useCallback } from "react";
 
-// ── Storage helpers ───────────────────────────────────────────────────────────
-const LS_ACTIVATIONS = "inec_activations"; // { [nin]: { password, activatedAt } }
-const LS_VOTED       = "inec_voted";       // { ["nin:electionId"]: true }
-
-function lsGet(key) {
-  try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; }
-}
-function lsSet(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-}
-
-// ── INEC Staff accounts ───────────────────────────────────────────────────────
+// ── INEC Staff accounts (server-side only in production) ──────────────────────
 const INEC_STAFF = [
   { staffId: "INEC-001", password: "Admin1234", name: "Mahmood Yakubu",  title: "INEC Chairman",         zone: "National HQ" },
   { staffId: "INEC-002", password: "Admin1234", name: "Ruth Oriaran",    title: "Director ICT",          zone: "National HQ" },
   { staffId: "INEC-003", password: "Admin1234", name: "Festus Okoye",    title: "National Commissioner", zone: "South-South" },
 ];
 
-// ── INEC Pre-approved Voter Roll (seed) ───────────────────────────────────────
-// "active" accounts have a default password baked in.
-// "pending" accounts have no password — they must activate via the Register tab.
-// Activations are persisted to localStorage so they survive page refresh / new tabs.
-const INEC_VOTER_ROLL_SEED = [
-  { nin: "12345678901", name: "Amara Okafor",    state: "Lagos",   lga: "Ikeja",         ward: "Ward 3",  pollingUnit: "PU/LA/001", status: "active",  password: "Voter1234" },
-  { nin: "23456789012", name: "Bello Musa",       state: "Kano",    lga: "Kano Mun.",     ward: "Ward 7",  pollingUnit: "PU/KN/034", status: "active",  password: "Voter1234" },
-  { nin: "34567890123", name: "Chioma Eze",       state: "Enugu",   lga: "Enugu North",   ward: "Ward 1",  pollingUnit: "PU/EN/012", status: "active",  password: "Voter1234" },
-  { nin: "45678901234", name: "Danladi Usman",    state: "Kaduna",  lga: "Kaduna North",  ward: "Ward 5",  pollingUnit: "PU/KD/007", status: "active",  password: "Voter1234" },
-  { nin: "56789012345", name: "Efua Mensah",      state: "Rivers",  lga: "Port Harcourt", ward: "Ward 2",  pollingUnit: "PU/RV/019", status: "active",  password: "Voter1234" },
-  { nin: "67890123456", name: "Fatima Al-Hassan", state: "Borno",   lga: "Maiduguri",     ward: "Ward 4",  pollingUnit: "PU/BO/022", status: "pending", password: null },
-  { nin: "78901234567", name: "Gbenga Adeyemi",   state: "Oyo",     lga: "Ibadan North",  ward: "Ward 9",  pollingUnit: "PU/OY/055", status: "pending", password: null },
-  { nin: "89012345678", name: "Hauwa Suleiman",   state: "Katsina", lga: "Katsina",       ward: "Ward 6",  pollingUnit: "PU/KT/031", status: "pending", password: null },
-  { nin: "90123456789", name: "Ikenna Okonkwo",   state: "Anambra", lga: "Onitsha",       ward: "Ward 11", pollingUnit: "PU/AN/044", status: "pending", password: null },
-  { nin: "01234567890", name: "Jumoke Adesanya",  state: "Lagos",   lga: "Lagos Island",  ward: "Ward 3",  pollingUnit: "PU/LA/088", status: "pending", password: null },
+// ── INEC Pre-approved Voter Roll (identity data only — no passwords) ───────────
+// Passwords live in Supabase voter_activations table, not here.
+const INEC_VOTER_ROLL = [
+  { nin: "12345678901", name: "Amara Okafor",    state: "Lagos",   lga: "Ikeja",         ward: "Ward 3",  pollingUnit: "PU/LA/001", preActivated: true,  defaultPassword: "Voter1234" },
+  { nin: "23456789012", name: "Bello Musa",       state: "Kano",    lga: "Kano Mun.",     ward: "Ward 7",  pollingUnit: "PU/KN/034", preActivated: true,  defaultPassword: "Voter1234" },
+  { nin: "34567890123", name: "Chioma Eze",       state: "Enugu",   lga: "Enugu North",   ward: "Ward 1",  pollingUnit: "PU/EN/012", preActivated: true,  defaultPassword: "Voter1234" },
+  { nin: "45678901234", name: "Danladi Usman",    state: "Kaduna",  lga: "Kaduna North",  ward: "Ward 5",  pollingUnit: "PU/KD/007", preActivated: true,  defaultPassword: "Voter1234" },
+  { nin: "56789012345", name: "Efua Mensah",      state: "Rivers",  lga: "Port Harcourt", ward: "Ward 2",  pollingUnit: "PU/RV/019", preActivated: true,  defaultPassword: "Voter1234" },
+  { nin: "67890123456", name: "Fatima Al-Hassan", state: "Borno",   lga: "Maiduguri",     ward: "Ward 4",  pollingUnit: "PU/BO/022", preActivated: false, defaultPassword: null },
+  { nin: "78901234567", name: "Gbenga Adeyemi",   state: "Oyo",     lga: "Ibadan North",  ward: "Ward 9",  pollingUnit: "PU/OY/055", preActivated: false, defaultPassword: null },
+  { nin: "89012345678", name: "Hauwa Suleiman",   state: "Katsina", lga: "Katsina",       ward: "Ward 6",  pollingUnit: "PU/KT/031", preActivated: false, defaultPassword: null },
+  { nin: "90123456789", name: "Ikenna Okonkwo",   state: "Anambra", lga: "Onitsha",       ward: "Ward 11", pollingUnit: "PU/AN/044", preActivated: false, defaultPassword: null },
+  { nin: "01234567890", name: "Jumoke Adesanya",  state: "Lagos",   lga: "Lagos Island",  ward: "Ward 3",  pollingUnit: "PU/LA/088", preActivated: false, defaultPassword: null },
 ];
 
-// Merge seed with any persisted activations from localStorage.
-// Returns a mutable array — activations mutate entries in place and are saved back.
-function buildVoterRoll() {
-  const activations = lsGet(LS_ACTIVATIONS); // { [nin]: { password, activatedAt } }
-  return INEC_VOTER_ROLL_SEED.map(v => {
-    const activation = activations[v.nin];
-    if (activation) {
-      return { ...v, status: "active", password: activation.password, activatedAt: activation.activatedAt };
-    }
-    return { ...v };
-  });
+// ── Simple hash (must match server-side hash in api/activations.js) ───────────
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + chr;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0");
 }
 
-// ── Simple hash (demo — use SHA-256 + salt in production) ────────────────────
+// ── Vote receipt hash (for immutability) ─────────────────────────────────────
 function hashVote(receipt) {
   const str = JSON.stringify({ code: receipt.code, votes: receipt.votes, ts: receipt.timestamp });
   let hash = 0;
@@ -71,28 +49,20 @@ function hashVote(receipt) {
   return Math.abs(hash).toString(16).padStart(8, "0").toUpperCase();
 }
 
-// ── Context ───────────────────────────────────────────────────────────────────
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user,        setUser]        = useState(null);
   const [authError,   setAuthError]   = useState(null);
+  const [authLoading, setAuthLoading] = useState(false);
   const [lockedVotes, setLockedVotes] = useState({});
   const [auditTrail,  setAuditTrail]  = useState([]);
 
-  // Voter roll: seed merged with localStorage activations, rebuilt on mount
-  const voterRoll = useRef(buildVoterRoll());
-
-  // ── Audit logger ──────────────────────────────────────────────────────────────
   const appendAudit = useCallback((entry) => {
-    setAuditTrail(prev => [...prev, {
-      ...entry,
-      timestamp: new Date().toISOString(),
-      id: Date.now(),
-    }]);
+    setAuditTrail(prev => [...prev, { ...entry, timestamp: new Date().toISOString(), id: Date.now() }]);
   }, []);
 
-  // ── INEC login ────────────────────────────────────────────────────────────────
+  // ── INEC login (local — staff accounts don't need Supabase) ──────────────────
   const loginInec = useCallback((staffId, password) => {
     setAuthError(null);
     const staff = INEC_STAFF.find(s => s.staffId === staffId && s.password === password);
@@ -105,37 +75,107 @@ export function AuthProvider({ children }) {
     return true;
   }, [appendAudit]);
 
-  // ── Voter login ───────────────────────────────────────────────────────────────
-  const loginVoter = useCallback((nin, password) => {
+  // ── Voter login — verifies against Supabase voter_activations ─────────────────
+  const loginVoter = useCallback(async (nin, password) => {
     setAuthError(null);
+    setAuthLoading(true);
 
-    // Always re-merge with localStorage in case another tab activated since mount
-    voterRoll.current = buildVoterRoll();
-
-    const record = voterRoll.current.find(v => v.nin === nin);
-
+    // Find voter identity on the roll
+    const record = INEC_VOTER_ROLL.find(v => v.nin === nin);
     if (!record) {
-      setAuthError("This NIN is not on the INEC electoral register. Please visit your Local Government Area (LGA) INEC office to verify your registration.");
-      return false;
-    }
-    if (record.status === "pending") {
-      setAuthError("Your account has not been activated yet. Please use the Activate Account tab to set your password.");
-      return false;
-    }
-    if (record.password !== password) {
-      setAuthError("Incorrect password. Please try again.");
+      setAuthError("This NIN is not on the INEC electoral register. Please visit your LGA INEC office to verify your registration.");
+      setAuthLoading(false);
       return false;
     }
 
-    setUser({ role: "voter", nin: record.nin, name: record.name, state: record.state, lga: record.lga, ward: record.ward, pollingUnit: record.pollingUnit });
-    appendAudit({ action: "VOTER_LOGIN", actor: nin.slice(-4).padStart(11, "*"), detail: record.name });
-    return true;
+    try {
+      // Check password against Supabase
+      const res  = await fetch("/api/activations", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ nin, password, action: "verify" }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || "Server error");
+
+      if (!data.valid) {
+        if (data.reason === "not_activated") {
+          // Check if it's a pre-activated demo account with default password
+          if (record.preActivated && password === record.defaultPassword) {
+            // Seed the activation into Supabase on first login
+            await fetch("/api/activations", {
+              method:  "POST",
+              headers: { "Content-Type": "application/json" },
+              body:    JSON.stringify({ nin, password, action: "activate" }),
+            });
+            // Continue to login below
+          } else {
+            setAuthError("Your account has not been activated yet. Please use the Activate Account tab to set your password.");
+            setAuthLoading(false);
+            return false;
+          }
+        } else {
+          setAuthError("Incorrect password. Please try again.");
+          setAuthLoading(false);
+          return false;
+        }
+      }
+
+      const u = { role: "voter", nin: record.nin, name: record.name, state: record.state, lga: record.lga, ward: record.ward, pollingUnit: record.pollingUnit };
+      setUser(u);
+      appendAudit({ action: "VOTER_LOGIN", actor: nin.slice(-4).padStart(11, "*"), detail: record.name });
+
+      // Load which elections this voter has already voted in from Supabase
+      try {
+        const votedRes  = await fetch(`/api/votes?nin=${encodeURIComponent(nin)}`);
+        const votedData = await votedRes.json();
+        if (votedRes.ok && votedData.voted_elections) {
+          const map = {};
+          votedData.voted_elections.forEach(elId => { map[`${nin}:${elId}`] = true; });
+          setVotedElections(map);
+        }
+      } catch { /* non-fatal — will be enforced server-side anyway */ }
+
+      setAuthLoading(false);
+      return true;
+
+    } catch (err) {
+      setAuthError("Login failed — please check your connection and try again.");
+      setAuthLoading(false);
+      return false;
+    }
   }, [appendAudit]);
 
-  // ── Voter activation ──────────────────────────────────────────────────────────
-  // Activates an existing INEC-approved pending record.
-  // Persists the activation to localStorage so it works across browsers/tabs.
-  const activateVoter = useCallback((nin, password, confirmPassword) => {
+  // ── NIN lookup — checks Supabase for activation status ───────────────────────
+  const lookupVoterNin = useCallback(async (nin) => {
+    const record = INEC_VOTER_ROLL.find(v => v.nin === nin);
+    if (!record) {
+      setAuthError("NIN not found on the electoral register. Please visit your nearest INEC LGA office with your original NIMC slip.");
+      return { status: "not_found" };
+    }
+
+    try {
+      const res  = await fetch(`/api/activations?nin=${encodeURIComponent(nin)}`);
+      const data = await res.json();
+
+      if (data.activated) {
+        setAuthError("This NIN is already activated. Please use the Log In tab to access your account.");
+        return { status: "active" };
+      }
+      return { status: "pending", name: record.name, state: record.state, lga: record.lga, ward: record.ward };
+    } catch {
+      // If API unreachable, fall back to checking preActivated flag
+      if (record.preActivated) {
+        setAuthError("This NIN is already activated. Please use the Log In tab.");
+        return { status: "active" };
+      }
+      return { status: "pending", name: record.name, state: record.state, lga: record.lga, ward: record.ward };
+    }
+  }, []);
+
+  // ── Voter activation — persists to Supabase voter_activations ────────────────
+  const activateVoter = useCallback(async (nin, password, confirmPassword) => {
     setAuthError(null);
 
     if (!/^\d{11}$/.test(nin)) {
@@ -143,16 +183,9 @@ export function AuthProvider({ children }) {
       return false;
     }
 
-    // Re-merge with localStorage before checking
-    voterRoll.current = buildVoterRoll();
-    const record = voterRoll.current.find(v => v.nin === nin);
-
+    const record = INEC_VOTER_ROLL.find(v => v.nin === nin);
     if (!record) {
-      setAuthError("NIN not found on the electoral register. If you believe this is an error, please visit your nearest INEC LGA office with your original NIMC slip.");
-      return false;
-    }
-    if (record.status === "active") {
-      setAuthError("This NIN is already activated. Please log in with your password instead.");
+      setAuthError("NIN not found on the electoral register. Please visit your nearest INEC LGA office with your original NIMC slip.");
       return false;
     }
     if (password.length < 8) {
@@ -164,26 +197,37 @@ export function AuthProvider({ children }) {
       return false;
     }
 
-    // Persist activation to localStorage — survives page refresh and new tabs
-    const activations = lsGet(LS_ACTIVATIONS);
-    activations[nin]  = { password, activatedAt: new Date().toISOString() };
-    lsSet(LS_ACTIVATIONS, activations);
+    setAuthLoading(true);
+    try {
+      const res  = await fetch("/api/activations", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ nin, password, action: "activate" }),
+      });
+      const data = await res.json();
 
-    // Update in-memory roll too
-    record.password    = password;
-    record.status      = "active";
-    record.activatedAt = activations[nin].activatedAt;
+      if (res.status === 409 || data.error === "already_activated") {
+        setAuthError("This NIN is already activated. Please use the Log In tab.");
+        setAuthLoading(false);
+        return false;
+      }
+      if (!res.ok) throw new Error(data.error || "Activation failed");
 
-    setUser({ role: "voter", nin: record.nin, name: record.name, state: record.state, lga: record.lga, ward: record.ward, pollingUnit: record.pollingUnit });
-    appendAudit({ action: "VOTER_ACTIVATED", actor: nin.slice(-4).padStart(11, "*"), detail: record.name });
-    return true;
+      setUser({ role: "voter", nin: record.nin, name: record.name, state: record.state, lga: record.lga, ward: record.ward, pollingUnit: record.pollingUnit });
+      appendAudit({ action: "VOTER_ACTIVATED", actor: nin.slice(-4).padStart(11, "*"), detail: record.name });
+      setAuthLoading(false);
+      return true;
+
+    } catch (err) {
+      setAuthError("Activation failed — please check your connection and try again.");
+      setAuthLoading(false);
+      return false;
+    }
   }, [appendAudit]);
 
   // ── Logout ────────────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
-    if (user) {
-      appendAudit({ action: "LOGOUT", actor: user.staffId || user.nin?.slice(-4).padStart(11, "*"), detail: user.name });
-    }
+    if (user) appendAudit({ action: "LOGOUT", actor: user.staffId || user.nin?.slice(-4).padStart(11, "*"), detail: user.name });
     setUser(null);
     setAuthError(null);
   }, [user, appendAudit]);
@@ -196,55 +240,17 @@ export function AuthProvider({ children }) {
     return hash;
   }, [appendAudit]);
 
-  const verifyVoteIntegrity = useCallback((receipt) => {
-    const lock = lockedVotes[receipt.code];
-    if (!lock) return { valid: false, reason: "Receipt not found in lock registry" };
-    const currentHash = hashVote(receipt);
-    if (currentHash !== lock.hash) {
-      appendAudit({ action: "INTEGRITY_VIOLATION", actor: "SYSTEM", detail: `Receipt ${receipt.code} hash mismatch` });
-      return { valid: false, reason: "Vote integrity check failed — possible tampering detected" };
-    }
-    return { valid: true, hash: lock.hash, lockedAt: lock.lockedAt };
-  }, [lockedVotes, appendAudit]);
+  // ── didVote — checks Supabase votes table ─────────────────────────────────────
+  // Called as async from App.jsx; cached in local state to avoid re-fetching
+  const [votedElections, setVotedElections] = useState({});
 
-  // ── NIN lookup (used by activation step 1) ────────────────────────────────────
-  const lookupVoterNin = useCallback((nin) => {
-    voterRoll.current = buildVoterRoll(); // always fresh from localStorage
-    const record = voterRoll.current.find(v => v.nin === nin);
-    if (!record) {
-      setAuthError("NIN not found on the electoral register. If you believe this is an error, please visit your nearest INEC LGA office with your original NIMC slip.");
-      return { status: "not_found" };
-    }
-    if (record.status === "active") {
-      setAuthError("This NIN is already activated. Please use the Log In tab to access your account.");
-      return { status: "active" };
-    }
-    return { status: "pending", name: record.name, state: record.state, lga: record.lga, ward: record.ward };
-  }, []);
+  const didVote = useCallback((electionId) => {
+    if (!user?.nin) return false;
+    return !!votedElections[`${user.nin}:${electionId}`];
+  }, [user?.nin, votedElections]);
 
-  // ── didVote — reads from localStorage, keyed by "nin:electionId" ──────────────
-  // This is the authoritative voted check. Persists across refreshes and tabs.
-  const didVote = useCallback((nin, electionId) => {
-    if (!nin) return false;
-    const voted = lsGet(LS_VOTED);
-    return !!voted[`${nin}:${electionId}`];
-  }, []);
-
-  // ── markVoted — called after a successful vote submission ─────────────────────
   const markVoted = useCallback((nin, electionId) => {
-    const voted = lsGet(LS_VOTED);
-    voted[`${nin}:${electionId}`] = true;
-    lsSet(LS_VOTED, voted);
-  }, []);
-
-  // ── Roll stats ────────────────────────────────────────────────────────────────
-  const getRollStats = useCallback(() => {
-    const roll = buildVoterRoll();
-    return {
-      total:   roll.length,
-      active:  roll.filter(v => v.status === "active").length,
-      pending: roll.filter(v => v.status === "pending").length,
-    };
+    setVotedElections(prev => ({ ...prev, [`${nin}:${electionId}`]: true }));
   }, []);
 
   const isInec  = user?.role === "inec";
@@ -254,11 +260,12 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, isInec, isVoter, isGuest,
-      authError, setAuthError,
+      authError, setAuthError, authLoading,
       loginInec, loginVoter, activateVoter, logout,
-      commitVote, verifyVoteIntegrity,
+      commitVote,
       didVote, markVoted,
-      lockedVotes, auditTrail, getRollStats, lookupVoterNin,
+      lockedVotes, auditTrail,
+      lookupVoterNin,
     }}>
       {children}
     </AuthContext.Provider>

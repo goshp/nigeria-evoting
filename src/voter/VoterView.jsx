@@ -12,6 +12,7 @@ export default function VoterView({
   receipt, setReceipt,
   ballotStep, setBallotStep,
   onVoteSubmit,
+  voteError, setVoteError,
   isOnline,
 }) {
   const { user } = useAuth();
@@ -107,6 +108,8 @@ export default function VoterView({
       onSubmit={onVoteSubmit}
       onBack={() => setCurrentVoterElection(null)}
       isOnline={isOnline}
+      voteError={voteError}
+      setVoteError={setVoteError}
     />
   );
 }

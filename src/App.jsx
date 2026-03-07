@@ -122,9 +122,19 @@ function AppInner() {
   }
 
   // ── Vote submission ───────────────────────────────────────────────────────────
+  const [voteError, setVoteError] = useState(null);
+
   async function handleVoteSubmit() {
     if (!isVoter || !user?.nin) return;
-    const el   = currentVoterElection;
+    const el = currentVoterElection;
+
+    // Client-side guard — already voted in this election
+    if (didVoteForElection(el.id)) {
+      setVoteError("You have already voted in this election.");
+      return;
+    }
+
+    setVoteError(null);
     const code = generateReceiptCode();
 
     const newReceipt = {
@@ -139,16 +149,36 @@ function AppInner() {
     const hash            = commitVote(newReceipt);
     const receiptWithHash = { ...newReceipt, hash };
 
-    await submitVote(receiptWithHash);
-    markVoted(user.nin, el.id);
+    // POST to /api/votes — server enforces one vote per voter per election
+    const res = await fetch("/api/votes", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(receiptWithHash),
+    });
 
+    if (res.status === 409) {
+      // Server says already voted — mark locally and show error
+      markVoted(user.nin, el.id);
+      setVoteError("Your vote for this election has already been recorded.");
+      return;
+    }
+
+    if (!res.ok) {
+      setVoteError("Failed to submit vote — please check your connection and try again.");
+      return;
+    }
+
+    // Also enqueue for offline sync resilience
+    await submitVote(receiptWithHash);
+
+    markVoted(user.nin, el.id);
     setReceipts(prev => [...prev, receiptWithHash]);
     setReceipt(receiptWithHash);
 
     // Update votes_cast in Supabase
     const current = elections.find(e => e.id === el.id);
     if (current) {
-      const newCount = (current.votes_cast || 0) + 1;
+      const newCount   = (current.votes_cast || 0) + 1;
       const newTurnout = parseFloat((newCount / current.registered_voters * 100).toFixed(2));
       await fetch(`/api/elections?id=${encodeURIComponent(el.id)}`, {
         method:  "PATCH",
@@ -221,6 +251,7 @@ function AppInner() {
                 receipt={receipt}                            setReceipt={setReceipt}
                 ballotStep={ballotStep}                      setBallotStep={setBallotStep}
                 onVoteSubmit={handleVoteSubmit}
+                voteError={voteError}                        setVoteError={setVoteError}
                 isOnline={isOnline}
               />
             </ProtectedRoute>

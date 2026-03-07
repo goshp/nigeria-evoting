@@ -69,7 +69,7 @@ export function ElectionPickerScreen({ elections, didVote, voter, onPick }) {
 // ── BallotScreen ──────────────────────────────────────────────────────────────
 // Walks the voter through each ballot question (one per step).
 // Final step is a review screen before the encrypted submission.
-export function BallotScreen({ el, voter, draftVotes, setDraftVotes, step, setStep, onSubmit, onBack, isOnline }) {
+export function BallotScreen({ el, voter, draftVotes, setDraftVotes, step, setStep, onSubmit, onBack, isOnline, voteError, setVoteError }) {
   const ballot  = el.ballots[step];
   const isLast  = step === el.ballots.length - 1;
   const isReview = step === el.ballots.length;
@@ -180,10 +180,15 @@ export function BallotScreen({ el, voter, draftVotes, setDraftVotes, step, setSt
 
             <div className="ballot-footer">
               <button className="btn btn-secondary" onClick={() => setStep(0)}>← Revise</button>
+              {voteError && (
+                <div style={{ flex:1, background:"#f8d7da", border:"1px solid #f5c6cb", borderRadius:"8px", padding:"0.6rem 0.9rem", fontSize:"0.83rem", color:"#721c24" }}>
+                  🚫 {voteError}
+                </div>
+              )}
               <button
                 className="btn btn-primary btn-lg"
-                onClick={onSubmit}
-                disabled={el.ballots.some(b => !draftVotes[b.id])}
+                onClick={() => { setVoteError?.(null); onSubmit(); }}
+                disabled={el.ballots.some(b => !draftVotes[b.id]) || !!voteError}
               >
                 🗳️ Submit Encrypted Vote
               </button>
