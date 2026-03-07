@@ -95,6 +95,11 @@ async function syncToServer(votes) {
     body:    JSON.stringify(votes),
   });
 
+  // 409 = already recorded (duplicate receipt or already_voted) — treat as success
+  if (response.status === 409) {
+    return { success: true, duplicate: true };
+  }
+
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error || `Server responded with ${response.status}`);

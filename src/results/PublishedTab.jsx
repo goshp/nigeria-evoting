@@ -2,7 +2,7 @@
 // Shows tallied results for closed elections. Candidate votes come from
 // /api/results which counts directly from the Supabase votes table.
 
-import { ElectionReport } from "../shared/components.jsx";
+
 
 export default function PublishedTab({ elections }) {
   const closedElections = elections.filter(e => e.status === "closed");

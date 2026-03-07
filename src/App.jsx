@@ -209,7 +209,6 @@ function AppInner() {
       setVoteError("Failed to submit vote — please check your connection and try again."); return;
     }
 
-    await submitVote(receiptWithHash);
     markVoted(user.nin, el.id);
     setReceipts(prev => [...prev, receiptWithHash]);
     setReceipt(receiptWithHash);
